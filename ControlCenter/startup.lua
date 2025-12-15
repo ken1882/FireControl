@@ -23,7 +23,7 @@ system.init = function()
     group = system.datFromFile(system.groupFileName)
     linkedCannons = system.datFromFile(system.linkedCannons)
     MONSTERLIST = system.datFromFile(system.monster)
-    
+
     system.updatePersistentData()
 end
 
@@ -32,7 +32,7 @@ system.datFromFile = function (fileName)
     local result
     if file then
         local tmpFile = textutils.unserialise(file:read("a"))
-        
+
         if fileName == "dat" then
             result = system.resetProp()
             for k, v in pairs(result) do
@@ -64,7 +64,7 @@ system.datFromFile = function (fileName)
             result = system.resetMonster()
         end
     end
-    
+
     return result
 end
 
@@ -107,11 +107,13 @@ system.resetGroup = function ()
 end
 
 system.resetMonster = function ()
-    return {"minecraft:zombie", "minecraft:spider", "minecraft:creeper", "minecraft:cave_spider", "minecraft:husk", "minecraft:slime",
-               "minecraft:skeleton", "minecraft:wither_skeleton", "minecraft:guardian", "minecraft:phantom",
-               "minecraft:pillager", "minecraft:ravager", "minecraft:vex", "minecraft:warden", "minecraft:vindicator",
-               "minecraft:witch", "minecraft:ender_dragon", "minecraft:wither", "minecraft:wither_skeleton", "minecraft:hoglin"
-               , "minecraft:piglin", "minecraft:piglin_brute", "minecraft:zoglin", "minecraft:blaze", "minecraft:zombified_piglin"}
+    return {
+        "minecraft:zombie", "minecraft:spider", "minecraft:creeper", "minecraft:cave_spider", "minecraft:husk", "minecraft:slime",
+        "minecraft:skeleton", "minecraft:wither_skeleton", "minecraft:guardian", "minecraft:phantom",
+        "minecraft:pillager", "minecraft:ravager", "minecraft:vex", "minecraft:warden", "minecraft:vindicator",
+        "minecraft:witch", "minecraft:ender_dragon", "minecraft:wither", "minecraft:wither_skeleton", "minecraft:hoglin",
+        "minecraft:piglin", "minecraft:piglin_brute", "minecraft:zoglin", "minecraft:blaze", "minecraft:zombified_piglin"
+    }
 end
 
 system.updatePersistentData = function()
@@ -522,29 +524,62 @@ function scanner:getShips(range)
 end
 
 function scanner:getAllTarget()
-    self:getPlayer(properties.raycastRange)
-    self:getMobs(properties.raycastRange)
-    self:getShips(properties.raycastRange)
+    targetMasks = {
+        players = false,
+        mobs = false,
+        vsShips = false
+    }
+    for k, v in pairs(tm_monitors.list) do
+        for k2, v2 in pairs(v.windows) do
+            group_name = modList[group[v2.group.index].mode]
+            if group_name == "PLAYER" then
+                targetMasks.players = true
+            elseif group_name == "MOBS" or group_name == "MONSTER" then
+                targetMasks.mobs = true
+            elseif group_name == "SHIP" then
+                targetMasks.vsShips = true
+            end
+        end
+    end
+    if targetMasks.players then
+        self:getPlayer(properties.raycastRange)
+    else
+        self.players = {}
+    end
+    if targetMasks.mobs then
+        self:getMobs(properties.raycastRange)
+    else
+        self.mobs = {}
+    end
+    if targetMasks.vsShips then
+        self:getShips(properties.raycastRange)
+    else
+        self.vsShips = {}
+    end
+end
+
+function refershWindows(all)
+    for k, v in pairs(tm_monitors.list) do -- 刷新所有处于雷达界面的窗口
+        for k2, v2 in pairs(v.windows) do
+            local flag = all or group[v2.group.index].mode > 2
+            if flag then
+                v2:refresh()
+                v.gpu.sync()
+            end
+        end
+    end
 end
 
 scanner.run = function()
     while true do
         scanner:getAllTarget()
-
-        for k, v in pairs(tm_monitors.list) do -- 刷新所有处于雷达界面的窗口
-            for k2, v2 in pairs(v.windows) do
-                if group[v2.group.index].mode > 2 then
-                    v2:refresh()
-                    v.gpu.sync()
-                end
-            end
-        end
-
+        refershWindows()
         for _, g in pairs(group) do
             if g.fireCd > 0 then
                 g.fireCd = g.fireCd - 1
                 if g.fireCd == 1 then
                     g.fire = false
+                    refershWindows(true)
                 end
             elseif g.fireCd < 1 then
                 if g.autoFire then
@@ -552,6 +587,7 @@ scanner.run = function()
                     g.fireCd = 20
                 else
                     g.fire = false
+                    refershWindows(true)
                 end
             end
         end
@@ -799,7 +835,7 @@ function absCoordInputWindow:refresh()
     self.drawW.drawText(46, 88, self.tmpPos.z, 0x000000, 0xFFFFFF)
     self.drawW.drawText(46, 96, "++++++++", 0x666666, 0x000000)
 
-    local fireColor = group[self.group.index].autoFire and 0xFF0000 or 0x444444
+    local fireColor = group[self.group.index].fire and 0xFF0000 or 0x444444
     local autoColor = group[self.group.index].autoFire and 0x50B358 or 0xFF0000
     self.drawW.line(2, 2, 2, 2, autoColor)
     self.drawW.rectangle(4, 4, 5, 5, fireColor)
@@ -809,7 +845,55 @@ function absCoordInputWindow:refresh()
     self.drawW.sync()
 end
 
+local function setPosFromPlayer(gIndex, pp_name, item)
+    local owner_name = peripheral.call(pp_name, "getOwner") or ""
+    if owner_name == "" then
+        return
+    end
+    local item = peripheral.call(pp_name, "getItemInHand")
+    if item and item.name == "cbc_ballistics:rangefinder" and item.nbt then
+        local results = item.nbt.results or ""
+        local x, y, z = results:match("X%s*=%s*(-?%d+)%s*,%s*Y%s*=%s*(-?%d+)%s*,%s*Z%s*=%s*(-?%d+)")
+        if x and y and z then
+            group[gIndex].pos.x = tonumber(x)
+            group[gIndex].pos.y = tonumber(y)
+            group[gIndex].pos.z = tonumber(z)
+        end
+    end
+end
+
+local function tryApplyRangefinder(gIndex)
+    local pp_names = peripheral.getNames()
+    local players  = {}
+    -- Get players near linked detectors and check if holding rangefinder
+    for _, name in pairs(pp_names) do
+        if string.find(name, "playerDetector") then
+            local pcs = peripheral.call(name, "getPlayersInRange", 3)
+            for _, p in pairs(pcs) do
+                table.insert(players, p)
+            end
+        end
+    end
+    local function isNearbyPlayer(pname)
+        for _, p in pairs(players) do
+            if p == pname then
+                return true
+            end
+        end
+        return false
+    end
+    for _, name in pairs(pp_names) do
+        if string.find(name, "inventoryManager") then
+            pname = peripheral.call(name, "getOwner") or ""
+            if pname ~= "" and isNearbyPlayer(pname) then
+                setPosFromPlayer(gIndex, name, item)
+            end
+        end
+    end
+end
+
 function absCoordInputWindow:click(x, y, button)
+    tryApplyRangefinder(self.group.index)
     if x < 18 and y < 9 then
         if x <= 4 and y <= 3 then
             group[self.group.index].autoFire = not group[self.group.index].autoFire
