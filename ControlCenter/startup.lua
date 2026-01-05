@@ -1,6 +1,6 @@
 local goggle_link_port = peripheral.find("goggle_link_port")
 
-local system, properties, linkedCannons, scanner, rayCaster, group, MONSTERLIST
+local system, properties, linkedCannons, scanner, rayCaster, group, MONSTERLIST, onVsShip
 local linkedgoggles = {}
 local modList = {"HMS", "POINT", "SHIP", "PLAYER", "MONSTER", "MOBS"}
 local protocol, missile_protocol, request_protocol = "CBCNetWork", "CBCMissileNetWork", "CBCcenter"
@@ -571,6 +571,7 @@ function refershWindows(all)
 end
 
 scanner.run = function()
+    onVsShip, err = pcall(ship.getId)
     while true do
         scanner:getAllTarget()
         refershWindows()
@@ -592,13 +593,13 @@ scanner.run = function()
             end
         end
 
-        if ship then
+        if isOnShip then
             selfPos = ship.getWorldspacePosition()
             selfRot = ship.getQuaternion()
             self_velocity = ship.getVelocity()
             selfOmega = ship.getOmega()
         end
-    
+
         for k, v in pairs(group) do
             local kk1
             if v.mode == 3 then kk1 = "vsShips"
